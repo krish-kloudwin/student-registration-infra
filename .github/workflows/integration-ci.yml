@@ -1,0 +1,226 @@
+name: Full-Stack Integration CI
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: Full-Stack Integration
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out infrastructure repository
+        uses: actions/checkout@v6
+        with:
+          path: student-registration-infra
+
+      - name: Check out backend repository
+        uses: actions/checkout@v6
+        with:
+          repository: krish-src/student-registration-backend
+          path: student-registration-backend
+
+      - name: Check out frontend repository
+        uses: actions/checkout@v6
+        with:
+          repository: krish-src/student-registration-frontend
+          path: student-registration-frontend
+
+      - name: Create CI environment file
+        working-directory: student-registration-infra
+        run: |
+          cat > .env <<'EOF'
+          POSTGRES_USER=student_app
+          POSTGRES_PASSWORD=ci_test_password
+          POSTGRES_DB=student_registration
+          CORS_ORIGINS=http://localhost
+          JWT_SECRET_KEY=ci-test-jwt-secret-key
+          JWT_ALGORITHM=HS256
+          JWT_EXPIRE_MINUTES=60
+          EOF
+
+      - name: Create temporary Nginx Basic Auth credentials
+        working-directory: student-registration-infra
+        run: |
+          printf 'evaluator:%s\n' "$(openssl passwd -apr1 'ci-test-password')" > nginx/.htpasswd
+
+      - name: Validate Docker Compose configuration
+        working-directory: student-registration-infra
+        run: |
+          docker compose config -q
+
+      - name: Build complete Docker stack
+        working-directory: student-registration-infra
+        run: |
+          docker compose build
+
+      - name: Start complete Docker stack
+        working-directory: student-registration-infra
+        run: |
+          docker compose up -d
+
+      - name: Show container status
+        working-directory: student-registration-infra
+        run: |
+          docker compose ps
+
+      - name: Wait for application
+        working-directory: student-registration-infra
+        run: |
+          for i in {1..30}; do
+            if curl -fsS http://localhost/ > /dev/null; then
+              echo "Application is ready."
+              exit 0
+            fi
+
+            echo "Waiting for application..."
+            sleep 2
+          done
+
+          echo "Application did not become ready."
+          docker compose logs
+          exit 1
+
+      - name: Test frontend through Nginx
+        run: |
+          curl -fsS http://localhost/ > /dev/null
+          echo "Frontend is reachable."
+
+      - name: Test unauthenticated student API
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" \
+            http://localhost/api/v1/students)
+
+          if [ "$status" != "401" ]; then
+            echo "Expected HTTP 401, got $status"
+            exit 1
+          fi
+
+          echo "Unauthenticated API correctly returned 401."
+
+      - name: Create CI admin account
+        working-directory: student-registration-infra
+        run: |
+          docker compose exec -T backend python - <<'PY'
+          from app.database import SessionLocal
+          from app.models import Admin
+          from app.auth_utils import hash_password
+
+          db = SessionLocal()
+
+          username = "ciadmin"
+          password = "ci-admin-password"
+
+          existing = db.query(Admin).filter(Admin.username == username).first()
+
+          if existing:
+              existing.password_hash = hash_password(password)
+          else:
+              db.add(
+                  Admin(
+                      username=username,
+                      password_hash=hash_password(password)
+                  )
+              )
+
+          db.commit()
+          db.close()
+
+          print("CI admin account created.")
+          PY
+
+      - name: Test admin login
+        run: |
+          status=$(curl -s \
+            -o /tmp/login-response.json \
+            -c /tmp/cookies.txt \
+            -w "%{http_code}" \
+            -X POST \
+            http://localhost/api/v1/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"username":"ciadmin","password":"ci-admin-password"}')
+
+          if [ "$status" != "200" ]; then
+            echo "Expected HTTP 200 from login, got $status"
+            cat /tmp/login-response.json
+            exit 1
+          fi
+
+          echo "Admin login succeeded."
+
+      - name: Test authenticated student API
+        run: |
+          status=$(curl -s \
+            -o /tmp/students-response.json \
+            -b /tmp/cookies.txt \
+            -w "%{http_code}" \
+            http://localhost/api/v1/students)
+
+          if [ "$status" != "200" ]; then
+            echo "Expected HTTP 200 from authenticated students API, got $status"
+            cat /tmp/students-response.json
+            exit 1
+          fi
+
+          echo "Authenticated student API succeeded."
+
+      - name: Test Swagger protection
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" \
+            http://localhost/docs)
+
+          if [ "$status" != "401" ]; then
+            echo "Expected HTTP 401 for protected Swagger, got $status"
+            exit 1
+          fi
+
+          echo "Swagger correctly requires Basic Auth."
+
+      - name: Test Swagger with Basic Auth
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" \
+            -u evaluator:ci-test-password \
+            http://localhost/docs)
+
+          if [ "$status" != "200" ]; then
+            echo "Expected HTTP 200 for authenticated Swagger, got $status"
+            exit 1
+          fi
+
+          echo "Swagger authentication succeeded."
+
+      - name: Show final container status
+        if: always()
+        working-directory: student-registration-infra
+        run: |
+          docker compose ps
+
+      - name: Show logs on failure
+        if: failure()
+        working-directory: student-registration-infra
+        run: |
+          docker compose logs
+
+      - name: Clean up Docker stack
+        if: always()
+        working-directory: student-registration-infra
+        run: |
+          docker compose down -v --remove-orphans
+
+      - name: Remove temporary CI credentials
+        if: always()
+        working-directory: student-registration-infra
+        run: |
+          rm -f .env
+          rm -f nginx/.htpasswd
