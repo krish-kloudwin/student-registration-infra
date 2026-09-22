@@ -1,0 +1,76 @@
+name: Infrastructure CI
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  infrastructure-ci:
+    name: Infrastructure CI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out infrastructure repository
+        uses: actions/checkout@v4
+        with:
+          path: student-registration-infra
+
+      - name: Check out backend repository
+        uses: actions/checkout@v4
+        with:
+          repository: krish-src/student-registration-backend
+          path: student-registration-backend
+
+      - name: Check out frontend repository
+        uses: actions/checkout@v4
+        with:
+          repository: krish-src/student-registration-frontend
+          path: student-registration-frontend
+
+      - name: Create CI environment file
+        working-directory: student-registration-infra
+        run: |
+          cat > .env <<'EOF'
+          POSTGRES_USER=student_app
+          POSTGRES_PASSWORD=ci_test_password
+          POSTGRES_DB=student_registration
+          CORS_ORIGINS=http://localhost
+          JWT_SECRET_KEY=ci-test-jwt-secret-key
+          JWT_ALGORITHM=HS256
+          JWT_EXPIRE_MINUTES=60
+          EOF
+
+      - name: Create temporary Nginx Basic Auth credentials
+        working-directory: student-registration-infra
+        run: |
+          printf 'evaluator:%s\n' "$(openssl passwd -apr1 'ci-test-password')" > nginx/.htpasswd
+
+      - name: Validate Docker Compose configuration
+        working-directory: student-registration-infra
+        run: |
+          docker compose config -q
+
+      - name: Build complete Docker stack
+        working-directory: student-registration-infra
+        run: |
+          docker compose build
+
+      - name: Validate Nginx configuration
+        working-directory: student-registration-infra
+        run: |
+          docker compose run --rm --no-deps nginx nginx -t
+
+      - name: Remove temporary CI credentials
+        if: always()
+        working-directory: student-registration-infra
+        run: |
+          rm -f .env
+          rm -f nginx/.htpasswd
