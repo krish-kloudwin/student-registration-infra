@@ -15,22 +15,22 @@ permissions:
 jobs:
   infrastructure-ci:
     name: Infrastructure CI
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out infrastructure repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: student-registration-infra
 
       - name: Check out backend repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: krish-src/student-registration-backend
           path: student-registration-backend
 
       - name: Check out frontend repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: krish-src/student-registration-frontend
           path: student-registration-frontend
@@ -63,10 +63,26 @@ jobs:
         run: |
           docker compose build
 
+      - name: Start complete Docker stack
+        working-directory: student-registration-infra
+        run: |
+          docker compose up -d
+
+      - name: Show running services
+        working-directory: student-registration-infra
+        run: |
+          docker compose ps
+
       - name: Validate Nginx configuration
         working-directory: student-registration-infra
         run: |
-          docker compose run --rm --no-deps nginx nginx -t
+          docker compose exec -T nginx nginx -t
+
+      - name: Stop and clean up Docker stack
+        if: always()
+        working-directory: student-registration-infra
+        run: |
+          docker compose down -v --remove-orphans
 
       - name: Remove temporary CI credentials
         if: always()
