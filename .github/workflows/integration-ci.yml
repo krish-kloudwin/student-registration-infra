@@ -11,6 +11,11 @@ on:
 
   workflow_dispatch:
 
+  repository_dispatch:
+    types:
+      - backend-updated
+      - frontend-updated
+
 permissions:
   contents: read
 
@@ -30,12 +35,14 @@ jobs:
         with:
           repository: krish-src/student-registration-backend
           path: student-registration-backend
+          ref: ${{ github.event.client_payload.backend_sha || 'main' }}
 
       - name: Check out frontend repository
         uses: actions/checkout@v6
         with:
           repository: krish-src/student-registration-frontend
           path: student-registration-frontend
+          ref: ${{ github.event.client_payload.frontend_sha || 'main' }}
 
       - name: Create CI environment file
         working-directory: student-registration-infra
