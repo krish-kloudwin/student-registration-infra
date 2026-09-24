@@ -82,20 +82,23 @@ jobs:
         run: |
           docker compose ps
 
-      - name: Wait for application
+      - name: Wait for backend API
         working-directory: student-registration-infra
         run: |
           for i in {1..30}; do
-            if curl -fsS http://localhost/ > /dev/null; then
-              echo "Application is ready."
+            status=$(curl -s -o /dev/null -w "%{http_code}" \
+              http://localhost/api/v1/students || true)
+
+            if [ "$status" = "401" ]; then
+              echo "Backend API is ready."
               exit 0
             fi
 
-            echo "Waiting for application..."
+            echo "Waiting for backend API... HTTP $status"
             sleep 2
           done
 
-          echo "Application did not become ready."
+          echo "Backend API did not become ready."
           docker compose logs
           exit 1
 
