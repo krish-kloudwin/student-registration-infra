@@ -67,17 +67,17 @@ jobs:
 
           mkdir -p \
             "$CI_ACME_DIR" \
-            "$CI_LETSENCRYPT_DIR/live/32.195.71.91"
+            "$CI_LETSENCRYPT_DIR/live/myastrowin.com"
 
           openssl req \
             -x509 \
             -nodes \
             -newkey rsa:2048 \
             -days 1 \
-            -keyout "$CI_LETSENCRYPT_DIR/live/32.195.71.91/privkey.pem" \
-            -out "$CI_LETSENCRYPT_DIR/live/32.195.71.91/fullchain.pem" \
-            -subj "/CN=32.195.71.91" \
-            -addext "subjectAltName=IP:32.195.71.91"
+            -keyout "$CI_LETSENCRYPT_DIR/live/myastrowin.com/privkey.pem" \
+            -out "$CI_LETSENCRYPT_DIR/live/myastrowin.com/fullchain.pem" \
+            -subj "/CN=myastrowin.com" \
+            -addext "subjectAltName=DNS:myastrowin.com,DNS:www.myastrowin.com"
 
       - name: Validate Docker Compose configuration
         working-directory: student-registration-infra
