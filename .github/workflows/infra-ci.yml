@@ -19,8 +19,6 @@ jobs:
 
     env:
       COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
-      CI_ACME_DIR: ${{ runner.temp }}/acme-challenge
-      CI_LETSENCRYPT_DIR: ${{ runner.temp }}/letsencrypt
 
     steps:
       - name: Check out infrastructure repository
@@ -31,13 +29,13 @@ jobs:
       - name: Check out backend repository
         uses: actions/checkout@v6
         with:
-          repository: krish-src/student-registration-backend
+          repository: krish-kloudwin/student-registration-backend
           path: student-registration-backend
 
       - name: Check out frontend repository
         uses: actions/checkout@v6
         with:
-          repository: krish-src/student-registration-frontend
+          repository: krish-kloudwin/student-registration-frontend
           path: student-registration-frontend
 
       - name: Create CI environment file
@@ -57,6 +55,11 @@ jobs:
         working-directory: student-registration-infra
         run: |
           printf 'evaluator:%s\n' "$(openssl passwd -apr1 'ci-test-password')" > nginx/.htpasswd
+
+      - name: Configure CI temporary paths
+        run: |
+          echo "CI_ACME_DIR=$RUNNER_TEMP/acme-challenge" >> "$GITHUB_ENV"
+          echo "CI_LETSENCRYPT_DIR=$RUNNER_TEMP/letsencrypt" >> "$GITHUB_ENV"
 
       - name: Create temporary CI TLS certificate
         run: |
