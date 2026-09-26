@@ -212,10 +212,10 @@ jobs:
           set -euo pipefail
 
           curl --fail --retry 10 --retry-delay 3 \
-            "https://$EC2_HOST/" > /dev/null
+            "https://myastrowin.com/" > /dev/null
 
           status=$(curl -s -o /dev/null -w "%{http_code}" \
-            "https://$EC2_HOST/api/v1/students")
+            "https://myastrowin.com/api/v1/students")
 
           test "$status" = "401"
 
