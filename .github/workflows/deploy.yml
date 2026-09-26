@@ -1,0 +1,216 @@
+name: Deploy to EC2
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy application to EC2
+    runs-on: ubuntu-24.04
+
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
+
+    environment: production
+
+    steps:
+      - name: Check out infrastructure
+        uses: actions/checkout@v6
+
+      - name: Check out backend
+        uses: actions/checkout@v6
+        with:
+          repository: krish-kloudwin/student-registration-backend
+          path: student-registration-backend
+          ref: main
+          token: ${{ secrets.REPO_READ_TOKEN }}
+
+      - name: Check out frontend
+        uses: actions/checkout@v6
+        with:
+          repository: krish-kloudwin/student-registration-frontend
+          path: student-registration-frontend
+          ref: main
+          token: ${{ secrets.REPO_READ_TOKEN }}
+
+      - name: Configure SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/ec2_deploy_key
+          chmod 600 ~/.ssh/ec2_deploy_key
+
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Copy backend to EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          set -euo pipefail
+
+          tar \
+            --exclude='.git' \
+            --exclude='.env' \
+            --exclude='__pycache__' \
+            -C student-registration-backend \
+            -czf - . |
+          ssh \
+            -i ~/.ssh/ec2_deploy_key \
+            "$EC2_USER@$EC2_HOST" \
+            'set -e; \
+             find /opt/student-registration/student-registration-backend \
+               -mindepth 1 -maxdepth 1 -exec rm -rf {} +; \
+             tar -xzf - \
+               -C /opt/student-registration/student-registration-backend'
+
+      - name: Copy frontend to EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          set -euo pipefail
+
+          tar \
+            --exclude='.git' \
+            --exclude='.env' \
+            --exclude='node_modules' \
+            --exclude='.next' \
+            -C student-registration-frontend \
+            -czf - . |
+          ssh \
+            -i ~/.ssh/ec2_deploy_key \
+            "$EC2_USER@$EC2_HOST" \
+            'set -e; \
+             find /opt/student-registration/student-registration-frontend \
+               -mindepth 1 -maxdepth 1 -exec rm -rf {} +; \
+             tar -xzf - \
+               -C /opt/student-registration/student-registration-frontend'
+
+      - name: Copy infrastructure to EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          set -euo pipefail
+
+          tar \
+            --exclude='.git' \
+            --exclude='.env' \
+            -C . \
+            -czf - . |
+          ssh \
+            -i ~/.ssh/ec2_deploy_key \
+            "$EC2_USER@$EC2_HOST" \
+            'set -e; \
+             find /opt/student-registration/student-registration-infra \
+               -mindepth 1 -maxdepth 1 \
+               ! -name .env \
+               ! -name nginx \
+               -exec rm -rf {} +; \
+             mkdir -p /opt/student-registration/student-registration-infra/nginx; \
+             find /opt/student-registration/student-registration-infra/nginx \
+               -mindepth 1 \
+               ! -name .htpasswd \
+               -exec rm -rf {} +; \
+             tar -xzf - \
+               -C /opt/student-registration/student-registration-infra'
+
+      - name: Deploy on EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i ~/.ssh/ec2_deploy_key \
+            "$EC2_USER@$EC2_HOST" \
+            'set -euo pipefail
+
+             cd /opt/student-registration/student-registration-infra
+
+             sudo docker builder prune -af
+
+             sudo docker compose \
+               -f docker-compose.yml \
+               -f docker-compose.prod.yml \
+               build
+
+             sudo docker compose \
+               -f docker-compose.yml \
+               -f docker-compose.prod.yml \
+               up -d
+
+             for i in {1..30}; do
+               if curl -fsS http://127.0.0.1/ > /dev/null; then
+                 status=$(curl -s -o /dev/null -w "%{http_code}" \
+                   http://127.0.0.1/api/v1/students)
+
+                 if [ "$status" = "401" ]; then
+                   echo "Application is healthy."
+                   exit 0
+                 fi
+               fi
+
+               echo "Waiting for application..."
+               sleep 2
+             done
+
+             echo "Deployment health check failed."
+             sudo docker compose \
+               -f docker-compose.yml \
+               -f docker-compose.prod.yml \
+               ps
+
+             sudo docker compose \
+               -f docker-compose.yml \
+               -f docker-compose.prod.yml \
+               logs --tail=100
+
+             exit 1'
+
+      - name: Clean unused Docker build cache
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          ssh \
+            -i ~/.ssh/ec2_deploy_key \
+            "$EC2_USER@$EC2_HOST" \
+            'sudo docker builder prune -af && sudo docker image prune -f'
+
+      - name: External smoke test
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
+          set -euo pipefail
+
+          curl --fail --retry 10 --retry-delay 3 \
+            "http://$EC2_HOST/" > /dev/null
+
+          status=$(curl -s -o /dev/null -w "%{http_code}" \
+            "http://$EC2_HOST/api/v1/students")
+
+          test "$status" = "401"
+
+          echo "External smoke tests passed."

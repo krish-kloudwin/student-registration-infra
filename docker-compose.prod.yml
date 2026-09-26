@@ -1,0 +1,18 @@
+services:
+  postgres:
+    ports: !reset []
+
+  backend:
+    volumes: !reset []
+
+  frontend:
+    depends_on:
+      backend:
+        condition: service_started
+
+  nginx:
+    depends_on:
+      backend:
+        condition: service_started
+      frontend:
+        condition: service_started
