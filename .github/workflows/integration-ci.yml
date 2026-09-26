@@ -24,6 +24,11 @@ jobs:
     name: Full-Stack Integration
     runs-on: ubuntu-24.04
 
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
+      CI_ACME_DIR: ${{ runner.temp }}/acme-challenge
+      CI_LETSENCRYPT_DIR: ${{ runner.temp }}/letsencrypt
+
     steps:
       - name: Check out infrastructure repository
         uses: actions/checkout@v6
@@ -62,6 +67,24 @@ jobs:
         run: |
           printf 'evaluator:%s\n' "$(openssl passwd -apr1 'ci-test-password')" > nginx/.htpasswd
 
+      - name: Create temporary CI TLS certificate
+        run: |
+          set -euo pipefail
+
+          mkdir -p \
+            "$CI_ACME_DIR" \
+            "$CI_LETSENCRYPT_DIR/live/32.195.71.91"
+
+          openssl req \
+            -x509 \
+            -nodes \
+            -newkey rsa:2048 \
+            -days 1 \
+            -keyout "$CI_LETSENCRYPT_DIR/live/32.195.71.91/privkey.pem" \
+            -out "$CI_LETSENCRYPT_DIR/live/32.195.71.91/fullchain.pem" \
+            -subj "/CN=32.195.71.91" \
+            -addext "subjectAltName=IP:32.195.71.91"
+
       - name: Validate Docker Compose configuration
         working-directory: student-registration-infra
         run: |
@@ -86,8 +109,8 @@ jobs:
         working-directory: student-registration-infra
         run: |
           for i in {1..30}; do
-            status=$(curl -s -o /dev/null -w "%{http_code}" \
-              http://localhost/api/v1/students || true)
+            status=$(curl -ks -o /dev/null -w "%{http_code}" \
+              https://localhost/api/v1/students || true)
 
             if [ "$status" = "401" ]; then
               echo "Backend API is ready."
@@ -104,13 +127,13 @@ jobs:
 
       - name: Test frontend through Nginx
         run: |
-          curl -fsS http://localhost/ > /dev/null
+          curl -kfsS https://localhost/ > /dev/null
           echo "Frontend is reachable."
 
       - name: Test unauthenticated student API
         run: |
-          status=$(curl -s -o /dev/null -w "%{http_code}" \
-            http://localhost/api/v1/students)
+          status=$(curl -ks -o /dev/null -w "%{http_code}" \
+            https://localhost/api/v1/students)
 
           if [ "$status" != "401" ]; then
             echo "Expected HTTP 401, got $status"
@@ -152,12 +175,12 @@ jobs:
 
       - name: Test admin login
         run: |
-          status=$(curl -s \
+          status=$(curl -ks \
             -o /tmp/login-response.json \
             -c /tmp/cookies.txt \
             -w "%{http_code}" \
             -X POST \
-            http://localhost/api/v1/auth/login \
+            https://localhost/api/v1/auth/login \
             -H "Content-Type: application/json" \
             -d '{"username":"ciadmin","password":"ci-admin-password"}')
 
@@ -171,11 +194,11 @@ jobs:
 
       - name: Test authenticated student API
         run: |
-          status=$(curl -s \
+          status=$(curl -ks \
             -o /tmp/students-response.json \
             -b /tmp/cookies.txt \
             -w "%{http_code}" \
-            http://localhost/api/v1/students)
+            https://localhost/api/v1/students)
 
           if [ "$status" != "200" ]; then
             echo "Expected HTTP 200 from authenticated students API, got $status"
@@ -187,8 +210,8 @@ jobs:
 
       - name: Test Swagger protection
         run: |
-          status=$(curl -s -o /dev/null -w "%{http_code}" \
-            http://localhost/docs)
+          status=$(curl -ks -o /dev/null -w "%{http_code}" \
+            https://localhost/docs)
 
           if [ "$status" != "401" ]; then
             echo "Expected HTTP 401 for protected Swagger, got $status"
@@ -199,9 +222,9 @@ jobs:
 
       - name: Test Swagger with Basic Auth
         run: |
-          status=$(curl -s -o /dev/null -w "%{http_code}" \
+          status=$(curl -ks -o /dev/null -w "%{http_code}" \
             -u evaluator:ci-test-password \
-            http://localhost/docs)
+            https://localhost/docs)
 
           if [ "$status" != "200" ]; then
             echo "Expected HTTP 200 for authenticated Swagger, got $status"

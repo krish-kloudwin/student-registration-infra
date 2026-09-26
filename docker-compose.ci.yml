@@ -1,0 +1,7 @@
+services:
+  nginx:
+    ports:
+      - "443:443"
+    volumes:
+      - ${CI_ACME_DIR}:/var/www/certbot:ro
+      - ${CI_LETSENCRYPT_DIR}:/etc/letsencrypt:ro
