@@ -168,9 +168,9 @@ jobs:
                up -d
 
              for i in {1..30}; do
-               if curl -fsS http://127.0.0.1/ > /dev/null; then
-                 status=$(curl -s -o /dev/null -w "%{http_code}" \
-                   http://127.0.0.1/api/v1/students)
+               if curl -kfsS https://127.0.0.1/ > /dev/null; then
+                 status=$(curl -ks -o /dev/null -w "%{http_code}" \
+                   https://127.0.0.1/api/v1/students)
 
                  if [ "$status" = "401" ]; then
                    echo "Application is healthy."
@@ -212,10 +212,10 @@ jobs:
           set -euo pipefail
 
           curl --fail --retry 10 --retry-delay 3 \
-            "http://$EC2_HOST/" > /dev/null
+            "https://$EC2_HOST/" > /dev/null
 
           status=$(curl -s -o /dev/null -w "%{http_code}" \
-            "http://$EC2_HOST/api/v1/students")
+            "https://$EC2_HOST/api/v1/students")
 
           test "$status" = "401"
 
